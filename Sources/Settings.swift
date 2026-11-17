@@ -59,14 +59,28 @@ final class SettingsWindowController {
         if window == nil {
             let host = NSHostingController(rootView: SettingsForm().environmentObject(monitor))
             host.sizingOptions = .preferredContentSize
-            let w = NSWindow(contentViewController: host)
+            let w = SettingsWindow(contentViewController: host)
             w.title = "Glance 설정"
             w.styleMask = [.titled, .closable]
             w.isReleasedWhenClosed = false
             w.center()
             window = w
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// Esc and ⌘W close the window (the app has no menu bar to provide ⌘W).
+final class SettingsWindow: NSWindow {
+    override func cancelOperation(_ sender: Any?) { close() }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "w" {
+            close()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }

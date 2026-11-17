@@ -370,7 +370,8 @@ struct DetailPage: View {
             }
             .padding(.leading, -4)
 
-            VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.vertical) {
+              VStack(alignment: .leading, spacing: 10) {
                 switch section {
                 case .cpu: CPUDetail()
                 case .memory: MemoryDetail()
@@ -380,8 +381,12 @@ struct DetailPage: View {
                 case .battery: BatteryDetail()
                 case .bluetooth: BluetoothDetail()
                 }
+              }
+              .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
+            .scrollBounceBehavior(.basedOnSize)
+            // Natural height until the screen runs out (≈ header + footer reserved), then scroll.
+            .frame(maxHeight: max(200, m.panelMaxHeight - 110))
 
             Divider().padding(.vertical, 2)
             MenuRow(id: "activity", title: "활성 상태 보기 열기…") { m.actions.openActivityMonitor(); m.actions.close() }
@@ -406,10 +411,14 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Off-screen copy of the content used to measure its natural height.
     private var measurer: NSHostingController<AnyView>!
     private var changeSubscription: AnyCancellable?
+    private var refitPending = false
     private var anchor: NSRect = .zero
+    private var screen: NSScreen?
     private var globalClickMonitor: Any?
     private var keyMonitor: Any?
     private var lastClose = Date.distantPast
+    /// Status item highlight while the panel is open (set by AppDelegate).
+    var onVisibilityChange: (Bool) -> Void = { _ in }
 
     var isShown: Bool { panel.isVisible }
 
@@ -442,41 +451,65 @@ final class PanelController: NSObject, NSWindowDelegate {
             glass.contentView = hosting
             panel.contentView = glass
         } else {
-            let fx = NSVisualEffectView()
+            let fx = NSVisualEffectView(frame: hosting.frame)
             fx.material = .popover
             fx.blendingMode = .behindWindow
             fx.state = .active
-            fx.wantsLayer = true
-            fx.layer?.cornerRadius = Theme.panelRadius
-            fx.layer?.cornerCurve = .continuous
-            fx.layer?.masksToBounds = true
-            fx.frame = hosting.frame
+            fx.maskImage = Self.roundedMask(radius: Theme.panelRadius)   // clips the blur itself
             fx.addSubview(hosting)
             panel.contentView = fx
         }
     }
 
-    /// Toggle from the status item. A click that just closed the panel (outside-click handler
-    /// fires first) must not immediately reopen it.
+    /// Resizable rounded-rect mask (cap insets = radius) for NSVisualEffectView.
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
+    }
+
+    /// Toggle from the status item. Clicking the status item while the panel is key makes it
+    /// resign key first (closing it); the guard stops that same click from reopening it.
     func toggle(from button: NSStatusBarButton) {
         if panel.isVisible {
-            close()
+            close(reason: "status item")
         } else if Date().timeIntervalSince(lastClose) > 0.25 {
             show(from: button)
         }
     }
 
-    func show(from button: NSStatusBarButton) {
-        guard let window = button.window else { return }
+    private func show(from button: NSStatusBarButton) {
+        guard !panel.isVisible, let window = button.window else { return }
         anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
-        monitor.page = nil
+        // With "Displays have separate Spaces" the button's window can belong to another display;
+        // trust the screen under the mouse (the click) and use its menu bar.
+        let mouse = NSEvent.mouseLocation
+        screen = NSScreen.screens.first { $0.frame.contains(mouse) }
+            ?? NSScreen.screens.first { $0.frame.contains(NSPoint(x: anchor.midX, y: anchor.midY)) }
+            ?? NSScreen.main
+        if let screen, !screen.frame.contains(NSPoint(x: anchor.midX, y: anchor.midY)) {
+            anchor = NSRect(x: mouse.x - 10, y: screen.visibleFrame.maxY, width: 20, height: 0)
+        }
+        monitor.panelMaxHeight = (screen?.visibleFrame.height ?? 800) - 20
+        // Test hook: simulate a short screen to exercise detail-page scrolling.
+        if let fake = ProcessInfo.processInfo.environment["RM_DEBUG_MAX_HEIGHT"].flatMap(Double.init) {
+            monitor.panelMaxHeight = fake
+        }
         monitor.hovered = nil
+        monitor.refreshBluetooth()
         place(size: NSSize(width: Theme.panelWidth, height: contentHeight()))
         // Non-activating panel: takes key focus (Esc) without activating the app, like Control Center.
         panel.makeKeyAndOrderFront(nil)
-        // Content changes (new data, page switch) → re-measure after SwiftUI applies them.
+        onVisibilityChange(true)
+        // Content changes (new data, page switch, hover) → re-measure once per run-loop pass.
         changeSubscription = monitor.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.refit() }
+            MainActor.assumeIsolated { self?.scheduleRefit() }
         }
         debugLog("show frame=\(NSStringFromRect(panel.frame)) key=\(panel.isKeyWindow) active=\(NSApp.isActive)")
 
@@ -484,10 +517,15 @@ final class PanelController: NSObject, NSWindowDelegate {
             MainActor.assumeIsolated { self?.close(reason: "outside click") }
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Esc
+            // Only while our panel is key — never swallow Esc in other windows (e.g. Settings).
+            guard event.keyCode == 53, let self, event.window === self.panel else { return event }   // Esc
             MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.monitor.page != nil { self.monitor.page = nil } else { self.close() }
+                if self.monitor.visiblePage != nil {
+                    self.monitor.hovered = nil
+                    self.monitor.page = nil
+                } else {
+                    self.close(reason: "esc")
+                }
             }
             return nil
         }
@@ -498,18 +536,21 @@ final class PanelController: NSObject, NSWindowDelegate {
         debugLog("close \(reason)")
         panel.orderOut(nil)
         lastClose = Date()
+        // Reset here (not on show) so a reopened panel never flashes the old detail page.
+        monitor.page = nil
         monitor.hovered = nil
         if let g = globalClickMonitor { NSEvent.removeMonitor(g) }
         if let k = keyMonitor { NSEvent.removeMonitor(k) }
         globalClickMonitor = nil
         keyMonitor = nil
         changeSubscription = nil
+        onVisibilityChange(false)
     }
 
     nonisolated func windowDidResignKey(_ notification: Notification) {
         MainActor.assumeIsolated {
             let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
-            close(reason: "resign key (frontmost=\(front), key=\(String(describing: NSApp.keyWindow)))")
+            close(reason: "resign key (frontmost=\(front))")
         }
     }
 
@@ -522,6 +563,17 @@ final class PanelController: NSObject, NSWindowDelegate {
         return h > 0 && h < 5000 ? ceil(h) : 400
     }
 
+    /// objectWillChange fires once per published property (5–6 per tick); measure once after them.
+    private func scheduleRefit() {
+        guard !refitPending else { return }
+        refitPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refitPending = false
+            self.refit()
+        }
+    }
+
     private func refit() {
         guard panel.isVisible else { return }
         let h = contentHeight()
@@ -532,14 +584,14 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     /// Below the menu bar, left edge aligned with the status item, kept on screen.
     private func place(size: NSSize) {
-        let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: anchor.midX, y: anchor.midY)) }
-            ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
+        guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
+        let height = min(size.height, visible.height - 12)   // detail pages scroll beyond this
         var x = anchor.minX
         x = min(x, visible.maxX - size.width - 6)
         x = max(x, visible.minX + 6)
-        let top = anchor == .zero ? visible.maxY : anchor.minY - 6
-        panel.setFrame(NSRect(x: x, y: top - size.height, width: size.width, height: size.height),
+        let top = anchor == .zero ? visible.maxY : min(anchor.minY, visible.maxY) - 6
+        panel.setFrame(NSRect(x: x, y: max(visible.minY + 6, top - height), width: size.width, height: height),
                        display: true)
+        panel.invalidateShadow()
     }
 }

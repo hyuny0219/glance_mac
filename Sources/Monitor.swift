@@ -86,7 +86,6 @@ final class ResourceMonitor: NSObject, ObservableObject, CLLocationManagerDelega
         }
     }
     // UI-only state (kept here because @State needs the SwiftUI macro plugin, absent in Command Line Tools)
-    // UI-only state (kept here because @State needs the SwiftUI macro plugin, absent in Command Line Tools)
     /// nil = module grid; otherwise the detail page shown in the panel.
     @Published var page: DetailSection?
     /// id of the element under the mouse (hover highlight).
@@ -100,6 +99,9 @@ final class ResourceMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     }
     /// false for the CLI snapshot tool so it never touches the user's saved settings.
     var persistsSettings = true
+
+    /// Usable panel height on the current screen (set when the panel opens).
+    var panelMaxHeight: CGFloat = 800
 
     /// Panel actions, wired up by AppDelegate.
     var actions = PanelActions()
@@ -227,6 +229,7 @@ final class ResourceMonitor: NSObject, ObservableObject, CLLocationManagerDelega
 
     /// Called when the status item would be hidden by the notch: show one metric fewer.
     func shrinkForSpace() {
+        guard menuBarStyle != .icon else { return }   // a single icon can't get smaller
         let all = StatusMetric.allCases.filter { enabledMetrics.contains($0) }
         let current = displayLimit ?? all.count
         guard current > 0 else { return }

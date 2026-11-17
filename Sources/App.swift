@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         panel = PanelController(monitor: monitor)
+        panel.onVisibilityChange = { [weak self] open in self?.statusItem.button?.highlight(open) }
         settings = SettingsWindowController(monitor: monitor)
         monitor.actions.close = { [weak self] in self?.panel.close() }
         monitor.actions.openSettings = { [weak self] in
@@ -117,7 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel(_ sender: Any?) {
         guard let button = statusItem.button else { return }
-        if !panel.isShown { monitor.refreshBluetooth() }
         panel.toggle(from: button)
     }
 }
