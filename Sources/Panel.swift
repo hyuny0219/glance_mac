@@ -221,12 +221,15 @@ struct NetworkModule: View {
     var body: some View {
         let n = m.snapshot.network
         let wifi = n.wifi
+        // RM_PRIVACY=1 hides SSID/IP (for public screenshots).
+        let privacy = ProcessInfo.processInfo.environment["RM_PRIVACY"] != nil
         let name: String = {
-            if n.primaryKind == .wifi, let ssid = wifi?.ssid { return ssid }
+            if n.primaryKind == .wifi, let ssid = wifi?.ssid, !privacy { return ssid }
             return n.connectionName
         }()
         let detail: String = {
             let active = n.interfaces.first { $0.isActive && $0.kind == n.primaryKind }
+            if privacy, active?.ipv4.first != nil { return "IP 비공개" }
             return active?.ipv4.first ?? (n.primaryKind == nil ? "오프라인" : n.connectionName)
         }()
         ModuleButton(section: .network) {
@@ -446,10 +449,21 @@ final class PanelController: NSObject, NSWindowDelegate {
         self.hosting = hosting
 
         if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: hosting.frame)
+            // Glass as the window's root view paints its full rectangle behind the rounded shape;
+            // host it in a transparent container and clip to the panel radius.
+            let container = NSView(frame: hosting.frame)
+            container.wantsLayer = true
+            container.layer?.backgroundColor = .clear
+            let glass = NSGlassEffectView(frame: container.bounds)
+            glass.autoresizingMask = [.width, .height]
             glass.cornerRadius = Theme.panelRadius
             glass.contentView = hosting
-            panel.contentView = glass
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = Theme.panelRadius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
+            container.addSubview(glass)
+            panel.contentView = container
         } else {
             let fx = NSVisualEffectView(frame: hosting.frame)
             fx.material = .popover

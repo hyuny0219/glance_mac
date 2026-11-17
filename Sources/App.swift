@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController!
     private var settings: SettingsWindowController!
     private var cancellables = Set<AnyCancellable>()
+    private var debugBackdrop: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -81,15 +82,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         monitor.start()
 
+        // Test hook for README screenshots: a gradient backdrop under the panel so the glass has
+        // something neutral to refract instead of whatever app windows are behind it.
+        if ProcessInfo.processInfo.environment["RM_DEBUG_BACKDROP"] != nil, let screen = NSScreen.main {
+            let frame = NSRect(x: screen.frame.minX, y: screen.frame.minY,
+                               width: screen.frame.width, height: screen.visibleFrame.maxY - screen.frame.minY)
+            let w = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+            w.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue - 1)   // just under the panel
+            w.ignoresMouseEvents = true
+            w.isReleasedWhenClosed = false
+            let image = NSImage(size: frame.size, flipped: false) { rect in
+                NSGradient(colors: [NSColor(calibratedRed: 0.20, green: 0.42, blue: 0.86, alpha: 1),
+                                    NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.85, alpha: 1),
+                                    NSColor(calibratedRed: 0.96, green: 0.55, blue: 0.62, alpha: 1)])?
+                    .draw(in: rect, angle: -35)
+                return true
+            }
+            let view = NSImageView(frame: NSRect(origin: .zero, size: frame.size))
+            view.image = image
+            view.imageScaling = .scaleAxesIndependently
+            w.contentView = view
+            w.orderFrontRegardless()
+            debugBackdrop = w
+        }
         if ProcessInfo.processInfo.environment["RM_DEBUG_OPEN_SETTINGS"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.monitor.actions.openSettings() }
         }
         // Test hook: open the panel shortly after launch (UI check without clicking).
         if ProcessInfo.processInfo.environment["RM_DEBUG_OPEN_PANEL"] != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.togglePanel(nil) }
+            let delay = Double(ProcessInfo.processInfo.environment["RM_DEBUG_OPEN_DELAY"] ?? "") ?? 2.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.debugBackdrop?.orderFrontRegardless()
+                self?.togglePanel(nil)
+            }
             // RM_DEBUG_OPEN_PANEL=<section> also drills into that page.
             if let page = DetailSection(rawValue: ProcessInfo.processInfo.environment["RM_DEBUG_OPEN_PANEL"] ?? "") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in self?.monitor.page = page }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1) { [weak self] in self?.monitor.page = page }
             }
         }
     }

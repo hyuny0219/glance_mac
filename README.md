@@ -2,8 +2,30 @@
 
 > 메뉴바에서 Mac 상태를 한눈에.
 
-macOS 메뉴바에 CPU · 메모리 · 디스크 · 네트워크(Wi-Fi/Ethernet) · 블루투스 상태를 보여주는 상주 앱입니다.
-Dock 아이콘 없이 메뉴바에만 나타나고, 클릭하면 상세 팝오버가 열립니다.
+macOS 메뉴바에 CPU · 온도 · 메모리 · 디스크 · 네트워크(Wi-Fi/Ethernet) · 배터리 · 블루투스 상태를 보여주는 상주 앱입니다.
+Dock 아이콘 없이 메뉴바에만 나타나고, 클릭하면 제어 센터 스타일 패널이 열립니다.
+
+![메뉴바](docs/screenshots/menubar.png)
+
+<p>
+  <img src="docs/screenshots/home.png" width="376" alt="패널 홈">
+  <img src="docs/screenshots/cpu.png" width="376" alt="CPU 상세">
+</p>
+
+<details>
+<summary>더 보기: 메모리 · 온도 · 배터리 · 설정</summary>
+
+<p>
+  <img src="docs/screenshots/memory.png" width="376" alt="메모리 상세">
+  <img src="docs/screenshots/temperature.png" width="376" alt="온도 상세">
+</p>
+<p>
+  <img src="docs/screenshots/battery.png" width="376" alt="배터리 상세">
+  <img src="docs/screenshots/settings.png" width="420" alt="설정 창">
+</p>
+</details>
+
+<sub>스크린샷: macOS 26 (Apple M5 Pro). 네트워크 IP는 가림 처리했습니다.</sub>
 
 ## 빌드 / 실행
 
@@ -52,3 +74,17 @@ Xcode 없이 Command Line Tools(`swiftc`)만으로 빌드합니다. macOS 14 이
 - **Wi-Fi 이름(SSID)**: macOS 14부터 위치 권한이 있어야 SSID를 알려줍니다. 팝오버의 "SSID 표시하기" 링크로 권한을 요청할 수 있고, 위치 정보 자체는 사용하지 않습니다.
 - 앱은 ad-hoc 서명입니다. 다시 빌드하면 서명이 바뀌어 위치 권한을 다시 요청할 수 있습니다.
 - 평소 점유: CPU 약 1%, 메모리 약 55MB (2초 주기 기준).
+
+## 개발용 환경변수
+
+| 변수 | 용도 |
+|---|---|
+| `RM_DEBUG=1` | 메뉴바 노치 배치 · 패널 열기/닫기 로그 |
+| `RM_DEBUG_OPEN_PANEL=1` 또는 `=cpu` 등 | 실행 후 패널을 자동으로 열기 (상세 페이지 지정 가능) |
+| `RM_DEBUG_OPEN_DELAY=<초>` | 위 자동 열기까지 대기 시간 (그래프 기록을 채울 때) |
+| `RM_DEBUG_OPEN_SETTINGS=1` | 실행 후 설정 창 열기 |
+| `RM_DEBUG_BACKDROP=1` | 패널 뒤에 그라데이션 배경 창 (스크린샷에 다른 앱 내용이 비치지 않게) |
+| `RM_PRIVACY=1` | Wi-Fi 이름 · IP 가리기 |
+| `RM_DEBUG_MAX_HEIGHT=<pt>` | 화면 높이가 작은 상황 재현 (상세 페이지 스크롤 확인) |
+| `RM_DEBUG_NOTCH_MAX_X=<x>` | 노치 위치를 가정해 메뉴바 자동 축소 확인 |
+
